@@ -1,4 +1,4 @@
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 import neurokit2 as nk  # type: ignore
 import numpy as np
@@ -14,7 +14,7 @@ dataframes_directory = './Results/dataframes/'
 figures_directory = './Results/figures/'
 
 
-def load_record(record_num: int, files_directory: str = mb_artm_directory, **kwargs: Dict[str, Any]):
+def load_record(record_num: int, files_directory: str = mb_artm_directory, **kwargs: Any):
     record_path = f'{files_directory}{record_num}'
     record = wfdb.rdrecord(record_path, **kwargs)
     ann = wfdb.rdann(record_path, 'atr', **kwargs)
