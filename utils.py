@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Tuple, Union
+import os
+from typing import Any, Dict, Iterable, List, Tuple, Union
 
 import neurokit2 as nk
 import numpy as np
@@ -90,12 +91,18 @@ def create_compare_df(df_beats: pd.DataFrame, dict_results: Dict[str, pd.DataFra
     series_concat_index = pd.concat([df_beats.cor_peak_index] + [
                                     dict_results[method].local_max for method in methods], axis=0, ignore_index=True)
 
+    # Create column with all the indexes (annotations and methods results)
     df_comp_methods = pd.DataFrame(
         {'index': series_concat_index}).reset_index(drop=True)
 
+    df_comp_methods = df_comp_methods.merge(
+        df_beats[['cor_peak_index', 'symbol']], left_on='index', right_on='cor_peak_index', how='left')
+
+    # Indexes present in annotations
     df_comp_methods['ann'] = pd.Series(df_comp_methods['index'].isin(
         df_beats.cor_peak_index), dtype=BOOL_TYPE)
 
+    # Indexes present in each method
     for method in methods:
         df_comp_methods[method] = pd.Series(df_comp_methods['index'].isin(
             dict_results[method].local_max), dtype=BOOL_TYPE)
@@ -201,27 +208,30 @@ def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods:
     return dict_results, first_used_sample, last_used_sample
 
 
-def plot_results(dict_results, df_beats, ecg, desired_anns, x_xis_factor=1):
+def plot_results(dict_results: Dict, df_beats: pd.DataFrame, ecg: pd.Series, ecg_annotations: Iterable[Tuple[Iterable, Dict[str, Any]]], x_xis_factor=1):
     methods = list(dict_results.keys())
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=ecg.index * x_xis_factor, y=ecg, name="ECG"))
 
-    for desired_ann in desired_anns:
-        # Get the samples of the desired annotations
-        df_beats_desired = df_beats[df_beats.symbol == desired_ann]
-        desired_peak_indexes = df_beats_desired.cor_peak_index
+    for desired_anns, style in ecg_annotations:
+        for desired_ann in desired_anns:
+            # Get the samples of the desired annotations
+            df_beats_desired = df_beats[df_beats.symbol == desired_ann]
+            desired_peak_indexes = df_beats_desired.cor_peak_index
 
-        # Plot the annotations
-        fig.add_trace(go.Scatter(x=desired_peak_indexes * x_xis_factor,
-                      y=ecg.loc[desired_peak_indexes], mode="markers", name=desired_ann, marker=dict(size=7, color="red")))
+            style['name'] = desired_ann
+
+            # Plot the annotations
+            fig.add_trace(go.Scatter(x=desired_peak_indexes * x_xis_factor,
+                                     y=ecg.loc[desired_peak_indexes], **style))
 
     for method in methods:
         df_method_beats = dict_results[method]
         peak_indexes = df_method_beats.local_max
         fig.add_trace(go.Scatter(x=peak_indexes * x_xis_factor,
-                      y=ecg.loc[peak_indexes], mode="markers", name=method, marker=dict(size=7)))
+                                 y=ecg.loc[peak_indexes], mode="markers", name=method, marker=dict(size=7)))
 
-        # Remove borders
+    # Remove borders
     fig.update_layout(
         margin=dict(l=0, r=0, t=15, b=0),
         paper_bgcolor="white",
@@ -240,19 +250,44 @@ def plot_results(dict_results, df_beats, ecg, desired_anns, x_xis_factor=1):
     return fig
 
 
-def calculate_metrics(df_comp_methods, method) -> Tuple[np.float32, np.float32]:
-    true_positive = ((df_comp_methods['ann'] == True) & (
-        df_comp_methods[method]) == True).values.sum()
-    true_negative = ((df_comp_methods['ann'] == False) & (
-        df_comp_methods[method]) == False).values.sum()
-    false_positive = ((df_comp_methods['ann'] == False) & (
-        df_comp_methods[method] == True)).values.sum()
-    false_negative = ((df_comp_methods['ann'] == True) & (
-        df_comp_methods[method] == False)).values.sum()
+def calculate_metrics(df_comp_methods, methods: Iterable[str]) -> Dict[str, Any]:
+    dict_metrics = {}
+    for method in methods:
+        mask_true_positive = ((df_comp_methods['ann'] == True) & (
+            df_comp_methods[method]) == True)
 
-    precision = true_positive / (true_positive + false_positive)
-    # recall = true_positive / (true_positive + false_negative)
-    accuracy = (true_positive + true_negative) / (true_positive +
-                                                  true_negative + false_positive + false_negative)
+        mask_true_negative = ((df_comp_methods['ann'] == False) & (
+            df_comp_methods[method]) == False)
 
-    return precision, accuracy
+        mask_false_positive = ((df_comp_methods['ann'] == False) & (
+            df_comp_methods[method] == True))
+
+        mask_false_negative = ((df_comp_methods['ann'] == True) & (
+            df_comp_methods[method] == False))
+
+        quant_true_positive = mask_true_positive.values.sum()
+        quant_true_negative = mask_true_negative.values.sum()
+        quant_false_positive = mask_false_positive.values.sum()
+        quant_false_negative = mask_false_negative.values.sum()
+
+        precision = quant_true_positive / \
+            (quant_true_positive + quant_false_positive)
+        accuracy = (quant_true_positive + quant_true_negative) / (quant_true_positive +
+                                                                  quant_true_negative + quant_false_positive + quant_false_negative)
+
+        dict_details = {
+            'false_positive': df_comp_methods['symbol'][mask_true_positive].value_counts().to_dict(),
+            'false_negative': df_comp_methods['symbol'][mask_false_negative].value_counts().to_dict(),
+        }
+
+        dict_metrics[method] = {
+            'precision': precision,
+            'accuracy': accuracy,
+            'details': dict_details
+        }
+
+    return dict_metrics
+
+
+def resolve_relative_path(path: str) -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), path))
