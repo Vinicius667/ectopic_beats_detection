@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Iterable, List, Tuple, Union
+from typing import Any, Iterable, MutableMapping, Tuple, Union
 
 import neurokit2 as nk
 import numpy as np
@@ -10,6 +10,16 @@ from plotly import graph_objects as go
 
 from globals import (ANN_TYPE, BOOL_TYPE, ECG_TYPE, INDEX_TYPE, LIST_BEATS_1,
                      mb_artm_directory)
+
+DICT_RESULTS_TYPE = MutableMapping[str, pd.DataFrame]
+METHODS_TYPE = Union[str, Iterable[str]]
+
+
+class Processor:
+    def __init__(self, processor_name: Union[str, None], *args, **kwargs):
+        self.processor_name = processor_name
+        self.args = args
+        self.kwargs = kwargs
 
 
 def load_record(record_num: int, files_directory: str = mb_artm_directory, **kwargs: Any) -> Tuple[wfdb.Record, wfdb.Annotation]:
@@ -86,10 +96,15 @@ def rolling_idxmax(series: pd.Series, window_size: int, closed: str = 'both', ce
     return series_rolling_idxmax
 
 
-def create_compare_df(df_beats: pd.DataFrame, dict_results: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def create_compare_df(df_beats: pd.DataFrame, dict_results: DICT_RESULTS_TYPE) -> pd.DataFrame:
     methods = list(dict_results.keys())
+
+    for method in methods:
+        if dict_results[method] is None:
+            del dict_results[method]
+
     series_concat_index = pd.concat([df_beats.cor_peak_index] + [
-                                    dict_results[method].local_max for method in methods], axis=0, ignore_index=True)
+                                    dict_results[method].local_max for method in methods], axis=0, ignore_index=True)  # type: ignore
 
     # Create column with all the indexes (annotations and methods results)
     df_comp_methods = pd.DataFrame(
@@ -105,33 +120,56 @@ def create_compare_df(df_beats: pd.DataFrame, dict_results: Dict[str, pd.DataFra
     # Indexes present in each method
     for method in methods:
         df_comp_methods[method] = pd.Series(df_comp_methods['index'].isin(
-            dict_results[method].local_max), dtype=BOOL_TYPE)
+            dict_results[method].local_max), dtype=BOOL_TYPE)  # type: ignore
 
     return df_comp_methods
 
 
 def stringfy_processor(processor) -> str:
+    """Convert processor to string.
+
+    Args:
+        processor (_type_): processor
+
+    Returns:
+        str: string representation of the processor
+    """
     if processor:
         return f'{processor[0]}|{processor[1]}'
     else:
         return 'None'
 
 
-def processor(ecg: npt.NDArray[np.float32], *args: Any) -> npt.NDArray[np.float32]:
-    print(args)
-    process, params = args
-    if process == 'detrend':
-        ecg = nk.signal_detrend(ecg, **params)
-    elif process == 'standardize':
-        ecg = nk.standardize(ecg, **params)  # type: ignore
+def apply_processor(ecg: npt.NDArray[np.float32], processor: Processor) -> npt.NDArray[np.float32]:
+    """Apply a processor to the ecg signal.
 
+    Args:
+        ecg (npt.NDArray[np.float32]): ecg signal
+
+    Raises:
+        ValueError: raised when an invalid processor is passed
+
+    Returns:
+        npt.NDArray[np.float32]: processed ecg signal
+    """
+
+    args = processor.args
+    kwargs = processor.kwargs
+    process_name = processor.processor_name
+
+    if process_name == 'detrend':
+        func = nk.signal_detrend
+    elif process_name == 'standardize':
+        func = nk.standardize
     else:
-        raise ValueError(
-            f'Invalid processor: {process}. Valid processors are: detrend, standardize')
-    return ecg
+        print(
+            f'Invalid processor: {process_name}. Valid processors are: detrend, standardize')
+        return ecg
+
+    return func(ecg, *args, **kwargs)  # type: ignore
 
 
-def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns: List = LIST_BEATS_1, signal_track: int = 0, *args: Any) -> Tuple[pd.DataFrame, pd.Series, int, int, int]:
+def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns: Iterable[str] = LIST_BEATS_1, signal_track: int = 0, processor: Processor = Processor(None)) -> Tuple[pd.DataFrame, pd.Series, int, int, int]:
     """
     Create a dataframe with all beats for a given record.
     """
@@ -147,8 +185,8 @@ def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns:
     # ECG signal
     ecg = record.p_signal[:, signal_track]  # type: ignore
 
-    if args:
-        ecg = processor(ecg, *args)
+    if processor.processor_name:
+        ecg = apply_processor(ecg, processor)
 
     ecg = pd.Series(ecg, dtype=ECG_TYPE)[
         start_samples:end_samples]
@@ -181,7 +219,24 @@ def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns:
     return df_beats, ecg, start_samples, end_samples, fs
 
 
-def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods: Union[List, str], start_samples: int, end_samples: int, fs: int, discard_start_sec: int, discard_end_sec: int) -> Tuple[Dict[str, pd.DataFrame], int, int]:
+def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods: METHODS_TYPE, start_samples: int, end_samples: int, fs: int, discard_start_sec: int, discard_end_sec: int) -> Tuple[DICT_RESULTS_TYPE, int, int]:
+    """Create a dictionary with the results of each method.
+
+    Args:
+        ecg (Union[npt.NDArray[np.float32], pd.Series]): ecg signal
+        methods (Union[List, str]): methods to be used for peak detection
+        start_samples (int): first sample to be used
+        end_samples (int): last sample to be used
+        fs (int): sampling rate (Hz)
+        discard_start_sec (int): seconds to be discarded from the beginning
+        discard_end_sec (int): seconds to be discarded from the end
+
+    Returns:
+        Tuple[Dict[str, Union[pd.DataFrame, None]], int, int]:
+            dict_results: dictionary with the results of each method
+            first_used_sample: first sample used comparing the results
+            last_used_sample: last sample used comparing the results
+    """
 
     if isinstance(methods, str):
         methods = [methods]
@@ -191,24 +246,28 @@ def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods:
 
     dict_results = {}
     for method in methods:
-        method_beat_indexes = find_peaks(ecg, fs, method)
-        # Fix index
-        method_beat_indexes += start_samples
-        df_method_beats = correct_peaks(ecg, method_beat_indexes, fs)
+        try:
+            method_beat_indexes = find_peaks(ecg, fs, method)
+            # Fix index
+            method_beat_indexes += start_samples
+            df_method_beats = correct_peaks(ecg, method_beat_indexes, fs)
 
-        # When the method fails to detect a peak, the index is set to NaN. We replace it with the original index.
-        df_method_beats.loc[df_method_beats.local_max.isna(
-        ), 'local_max'] = df_method_beats.local_max
+            # When the method fails to detect a peak, the index is set to NaN. We replace it with the original index.
+            df_method_beats.loc[df_method_beats.local_max.isna(
+            ), 'local_max'] = df_method_beats.local_max
 
-        local_max = df_method_beats.local_max
-        df_method_beats = df_method_beats[(
-            local_max >= first_used_sample) & (local_max < last_used_sample)]
-        # Store results in dict
-        dict_results[method] = df_method_beats
+            local_max = df_method_beats.local_max
+            df_method_beats = df_method_beats[(
+                local_max >= first_used_sample) & (local_max < last_used_sample)]
+            # Store results in dict
+            dict_results[method] = df_method_beats
+        except (IndexError, ValueError, KeyError):
+            print(f'Error in method: {method}')
+            # dict_results[method] = None
     return dict_results, first_used_sample, last_used_sample
 
 
-def plot_results(dict_results: Dict, df_beats: pd.DataFrame, ecg: pd.Series, ecg_annotations: Iterable[Tuple[Iterable, Dict[str, Any]]], x_xis_factor=1):
+def plot_results(dict_results: MutableMapping, df_beats: pd.DataFrame, ecg: pd.Series, ecg_annotations: Iterable[Tuple[Iterable, MutableMapping[str, Any]]], x_xis_factor=1):
     methods = list(dict_results.keys())
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=ecg.index * x_xis_factor, y=ecg, name="ECG"))
@@ -250,9 +309,11 @@ def plot_results(dict_results: Dict, df_beats: pd.DataFrame, ecg: pd.Series, ecg
     return fig
 
 
-def calculate_metrics(df_comp_methods, methods: Iterable[str]) -> Dict[str, Any]:
+def calculate_metrics(df_comp_methods, methods: METHODS_TYPE) -> MutableMapping[str, Any]:
     dict_metrics = {}
     for method in methods:
+        if method not in df_comp_methods.columns:
+            continue
         mask_true_positive = ((df_comp_methods['ann'] == True) & (
             df_comp_methods[method]) == True)
 
