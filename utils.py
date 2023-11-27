@@ -16,10 +16,24 @@ METHODS_TYPE = Union[str, Iterable[str]]
 
 
 class Processor:
-    def __init__(self, processor_name: Union[str, None], *args, **kwargs):
-        self.processor_name = processor_name
+    def __init__(self, processor_func: Union[str, None], *args, **kwargs):
+        # sort kwargs by key
+        kwargs = {k: v for k, v in sorted(
+            kwargs.items(), key=lambda item: item[0])}
+        args = sorted(args)
+
+        self.processor_func = processor_func
+        self.processor_name = '|'.join([str(processor_func)] +
+                                       [str(param) for param in [args, kwargs] if param])
         self.args = args
         self.kwargs = kwargs
+
+
+class Processors:
+    def __init__(self, processors: Iterable[Processor]):
+        self.processor_name = ';'.join(
+            [processor.processor_name for processor in processors])
+        self.processors = processors
 
 
 def load_record(record_num: int, files_directory: str = mb_artm_directory, **kwargs: Any) -> Tuple[wfdb.Record, wfdb.Annotation]:
@@ -125,22 +139,7 @@ def create_compare_df(df_beats: pd.DataFrame, dict_results: DICT_RESULTS_TYPE) -
     return df_comp_methods
 
 
-def stringfy_processor(processor) -> str:
-    """Convert processor to string.
-
-    Args:
-        processor (_type_): processor
-
-    Returns:
-        str: string representation of the processor
-    """
-    if processor:
-        return f'{processor[0]}|{processor[1]}'
-    else:
-        return 'None'
-
-
-def apply_processor(ecg: npt.NDArray[np.float32], processor: Processor) -> npt.NDArray[np.float32]:
+def apply_processors(ecg: npt.NDArray[np.float32], processors: Union[Processor, Processors]) -> npt.NDArray[np.float32]:
     """Apply a processor to the ecg signal.
 
     Args:
@@ -153,23 +152,30 @@ def apply_processor(ecg: npt.NDArray[np.float32], processor: Processor) -> npt.N
         npt.NDArray[np.float32]: processed ecg signal
     """
 
-    args = processor.args
-    kwargs = processor.kwargs
-    process_name = processor.processor_name
+    if isinstance(processors, Processor):
+        processors = Processors([processors])
 
-    if process_name == 'detrend':
-        func = nk.signal_detrend
-    elif process_name == 'standardize':
-        func = nk.standardize
-    else:
-        print(
-            f'Invalid processor: {process_name}. Valid processors are: detrend, standardize')
-        return ecg
+    for processor in processors.processors:
+        args = processor.args
+        kwargs = processor.kwargs
+        processor_func = processor.processor_func
 
-    return func(ecg, *args, **kwargs)  # type: ignore
+        if processor_func is None:
+            continue
+        elif processor_func == 'detrend':
+            func = nk.signal_detrend
+        elif processor_func == 'standardize':
+            func = nk.standardize
+        else:
+            print(
+                f'Invalid processor: {processor_func}. Valid processors are: detrend, standardize')
+            continue
+        ecg = func(ecg, *args, **kwargs)  # type: ignore
+
+    return ecg
 
 
-def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns: Iterable[str] = LIST_BEATS_1, signal_track: int = 0, processor: Processor = Processor(None)) -> Tuple[pd.DataFrame, pd.Series, int, int, int]:
+def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns: Iterable[str] = LIST_BEATS_1, signal_track: int = 0, processor: Union[Processor, Processors] = Processor(None)) -> Tuple[pd.DataFrame, pd.Series, int, int, int]:
     """
     Create a dataframe with all beats for a given record.
     """
@@ -186,7 +192,7 @@ def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns:
     ecg = record.p_signal[:, signal_track]  # type: ignore
 
     if processor.processor_name:
-        ecg = apply_processor(ecg, processor)
+        ecg = apply_processors(ecg, processor)
 
     ecg = pd.Series(ecg, dtype=ECG_TYPE)[
         start_samples:end_samples]
