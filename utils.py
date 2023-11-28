@@ -337,15 +337,11 @@ def calculate_metrics(df_comp_methods, methods: METHODS_TYPE) -> MutableMapping[
         accuracy = (quant_true_positive + quant_true_negative) / (quant_true_positive +
                                                                   quant_true_negative + quant_false_positive + quant_false_negative)
 
-        dict_details = {
-            'false_positive': df_comp_methods['symbol'][mask_true_positive].value_counts().to_dict(),
-            'false_negative': df_comp_methods['symbol'][mask_false_negative].value_counts().to_dict(),
-        }
-
         dict_metrics[method] = {
             'precision': precision,
             'accuracy': accuracy,
-            'details': dict_details
+            'false_positive': df_comp_methods['symbol'][mask_true_positive].shape[0],
+            'false_negative': df_comp_methods['symbol'][mask_false_negative].shape[0],
         }
 
     return dict_metrics
