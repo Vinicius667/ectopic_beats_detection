@@ -225,14 +225,14 @@ def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns:
     return df_beats, ecg, start_samples, end_samples, fs
 
 
-def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods: METHODS_TYPE, start_samples: int, end_samples: int, fs: int, discard_start_sec: int, discard_end_sec: int) -> Tuple[DICT_RESULTS_TYPE, int, int]:
+def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods: METHODS_TYPE, start_samples: int, first_used_sample: int, last_used_sample: int, fs: int, discard_start_sec: int, discard_end_sec: int) -> DICT_RESULTS_TYPE:
     """Create a dictionary with the results of each method.
 
     Args:
         ecg (Union[npt.NDArray[np.float32], pd.Series]): ecg signal
         methods (Union[List, str]): methods to be used for peak detection
-        start_samples (int): first sample to be used
-        end_samples (int): last sample to be used
+        first_used_sample (int): first sample used comparing the results
+        last_used_sample (int): last sample used comparing the results
         fs (int): sampling rate (Hz)
         discard_start_sec (int): seconds to be discarded from the beginning
         discard_end_sec (int): seconds to be discarded from the end
@@ -240,15 +240,10 @@ def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods:
     Returns:
         Tuple[Dict[str, Union[pd.DataFrame, None]], int, int]:
             dict_results: dictionary with the results of each method
-            first_used_sample: first sample used comparing the results
-            last_used_sample: last sample used comparing the results
     """
 
     if isinstance(methods, str):
         methods = [methods]
-
-    first_used_sample = start_samples + discard_start_sec * fs
-    last_used_sample = end_samples - discard_end_sec * fs
 
     dict_results = {}
     for method in methods:
@@ -270,7 +265,7 @@ def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods:
         except (IndexError, ValueError, KeyError):
             print(f'Error in method: {method}')
             # dict_results[method] = None
-    return dict_results, first_used_sample, last_used_sample
+    return dict_results
 
 
 def plot_results(dict_results: MutableMapping, df_beats: pd.DataFrame, ecg: pd.Series, ecg_annotations: Iterable[Tuple[Iterable, MutableMapping[str, Any]]], x_xis_factor=1):
