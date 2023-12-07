@@ -1,4 +1,5 @@
 import os
+import pickle
 from typing import Any, Iterable, MutableMapping, Tuple, Union
 
 import neurokit2 as nk
@@ -190,38 +191,27 @@ def create_df_beats(record_num: int, total_time: int, offset: int, derised_anns:
 
     # ECG signal
     ecg = record.p_signal[:, signal_track]  # type: ignore
-
     if processor.processor_name:
         ecg = apply_processors(ecg, processor)
-
     ecg = pd.Series(ecg, dtype=ECG_TYPE)[
         start_samples:end_samples]
-
     ann_beat_indexes = pd.Series(ann.sample, dtype=INDEX_TYPE)
     ann_beat_symbols = pd.Series(ann.symbol, dtype=ANN_TYPE)
-
     # Mask for time window and derised annotations
     mask_derised_ann = ann_beat_symbols.isin(derised_anns)
-
     # We are only interested in samples in the time window
     mask_time_window = (ann_beat_indexes >= start_samples) & (
         ann_beat_indexes < end_samples)
-
     mask_used_ann = mask_time_window & mask_derised_ann
-
     # Apply mask
     ann_beat_indexes = ann_beat_indexes[mask_used_ann].reset_index(drop=True)
     ann_beat_symbols = ann_beat_symbols[mask_used_ann].reset_index(drop=True)
-
     df_beats = correct_peaks(ecg, ann_beat_indexes, fs)
-
     df_beats = df_beats.rename(columns={'index': 'peak_index', 'local_max': 'cor_peak_index'}).merge(
         pd.DataFrame({'peak_index': ann_beat_indexes, 'symbol': ann_beat_symbols}), on='peak_index', how='left', validate='one_to_one')
-
     # If the peak is not corrected, use the original peak index
     df_beats.loc[df_beats.cor_peak_index.isna(
     ), 'cor_peak_index'] = df_beats.peak_index
-
     return df_beats, ecg, start_samples, end_samples, fs
 
 
@@ -311,6 +301,8 @@ def plot_results(dict_results: MutableMapping, df_beats: pd.DataFrame, ecg: pd.S
 
 
 def calculate_metrics(df_comp_methods, methods: METHODS_TYPE) -> MutableMapping[str, Any]:
+    if isinstance(methods, str):
+        methods = [methods]
     dict_metrics = {}
     for method in methods:
         if method not in df_comp_methods.columns:
@@ -349,3 +341,58 @@ def calculate_metrics(df_comp_methods, methods: METHODS_TYPE) -> MutableMapping[
 
 def resolve_relative_path(path: str) -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), path))
+
+
+def load_pickle(path: str) -> Any:
+    with open(path, 'rb') as f:
+        return pickle.load(f)
+
+
+def dict_multi_analysis_to_df(dict_multi_analysis: MutableMapping) -> pd.DataFrame:
+    dict_multi_analysis_df = {
+        'record_num': [],
+        'processor': [],
+        'method': [],
+        'accuracy': [],
+        'precision': [],
+        'signal_track': [],
+        'start_samples': [],
+        'end_samples': [],
+    }
+
+    for record_num, dict_processor in dict_multi_analysis.items():
+        for processor, dict_metrics in dict_processor.items():
+            for method, metrics in dict_metrics.items():
+                dict_multi_analysis_df['record_num'].append(record_num)
+                dict_multi_analysis_df['processor'].append(processor)
+                dict_multi_analysis_df['method'].append(method)
+                dict_multi_analysis_df['accuracy'].append(metrics['accuracy'])
+                dict_multi_analysis_df['precision'].append(
+                    metrics['precision'])
+                dict_multi_analysis_df['signal_track'].append(
+                    metrics['signal_track'])
+                dict_multi_analysis_df['start_samples'].append(
+                    metrics['start_samples'])
+                dict_multi_analysis_df['end_samples'].append(
+                    metrics['end_samples'])
+
+    df_multi_analysis = pd.DataFrame(dict_multi_analysis_df)
+    return df_multi_analysis
+
+
+def load_df_multi_analysis(dict_multi_analysis_files: Iterable[str]) -> pd.DataFrame:
+    df_multi_analysis = pd.concat([dict_multi_analysis_to_df(load_pickle(
+        file)) for file in dict_multi_analysis_files], axis=0, ignore_index=True)
+    return df_multi_analysis
+
+
+def check_in_df_multi_analysis(df_multi_analysis, record_num, processor, method, signal_track, start_samples, end_samples) -> bool:
+    df = df_multi_analysis
+    return df[
+        (df['record_num'] == record_num) &
+        (df['processor'] == processor) &
+        (df['method'] == method) &
+        (df['signal_track'] == signal_track) &
+        (df['start_samples'] == start_samples) &
+        (df['end_samples'] == end_samples)
+    ].shape[0] > 0
