@@ -1,12 +1,16 @@
 import os
 import pickle
-from typing import Any, Iterable, MutableMapping, Tuple, Union
+from typing import Any, Dict, Iterable, List, MutableMapping, Tuple, Union
 
+import cv2
+import matplotlib.pyplot as plt
 import neurokit2 as nk
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import wfdb
 from numpy import typing as npt
+from PIL import Image
 from plotly import graph_objects as go
 
 from globals import (ANN_TYPE, BOOL_TYPE, ECG_TYPE, INDEX_TYPE, LIST_BEATS_1,
@@ -249,7 +253,7 @@ def create_dict_results(ecg: Union[npt.NDArray[np.float32], pd.Series], methods:
 
             local_max = df_method_beats.local_max
             df_method_beats = df_method_beats[(
-                local_max >= first_used_sample) & (local_max < last_used_sample)]
+                local_max >= first_used_sample) & (local_max < last_used_sample)].reset_index(drop=True)
             # Store results in dict
             dict_results[method] = df_method_beats
         except (IndexError, ValueError, KeyError):
@@ -396,3 +400,25 @@ def check_in_df_multi_analysis(df_multi_analysis, record_num, processor, method,
         (df['start_samples'] == start_samples) &
         (df['end_samples'] == end_samples)
     ].shape[0] > 0
+
+
+def show_image(image, gamma: Union[npt.NDArray, int] = 2.2, axis=None, is_rgb: bool = True) -> plt.Axes:
+    """Show a single image with matplotlib"""
+    if axis is None:
+        fig, axis = plt.subplots()
+    if (image.dtype == np.float32) or (image.dtype == np.float64):
+        # Convert HDR to LDR
+        plot_image = hdr_to_ldr(image, gamma)
+
+    else:
+        plot_image = image
+
+    # Check if image is grayscale
+    if len(plot_image.shape) == 2:
+        axis.imshow(plot_image, cmap='gray')
+    else:
+        if not is_rgb:
+            plot_image = cv2.cvtColor(plot_image, cv2.COLOR_BGR2RGB)
+        axis.imshow(plot_image)
+    axis.axis('off')
+    return axis

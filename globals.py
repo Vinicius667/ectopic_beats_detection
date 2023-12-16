@@ -7,6 +7,7 @@ BOOL_TYPE = "bool"
 # tsipouras2005
 
 LIST_BEATS_1 = ['N', '/', 'f', 'F', 'L', 'R', 'Q', 'A', 'V']
+LIST_BEATS_2 = ['N', '/', 'L', 'R', 'A', 'V', '!', 'E']
 
 
 mb_artm_directory = './databases/mit-bih-arrhythmia-database-1.0.0/'
